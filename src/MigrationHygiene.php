@@ -46,8 +46,8 @@ abstract class MigrationHygiene extends TestCase
 
         static::assertSame([], $found, implode("\n", [
             '`ADD COLUMN … AFTER …` kopiert bei MySQL die ganze Tabelle, statt die Spalte sofort',
-            'anzuhängen. Shopwares AddColumnTrait::addColumn() lässt `AFTER` deshalb nicht zu —',
-            'benutze den Trait, dann erledigt sich die Stelle samt Existenzprüfung.',
+            'anzuhängen. Shopwares addColumn() lässt `AFTER` deshalb nicht zu — nimm es statt des',
+            'eigenen ALTER TABLE: MigrationStep bringt es mit, Existenzprüfung inklusive.',
             'Betroffen: ' . implode(', ', $found),
         ]));
     }

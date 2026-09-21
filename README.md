@@ -55,9 +55,17 @@ nicht.
 Grund als Kommentar daneben: *„don't allow AFTER statements, it causes temporary tables which are
 extrem slow, because mysql has to copy whole tables"*. In der Dokumentation steht das nirgends.
 
-*Abhilfe:* `use AddColumnTrait;` und `$this->addColumn($connection, 'tabelle', 'spalte',
-'VARCHAR(255)')`. Der Trait bringt die Existenzprüfung mit; die Migration schrumpft auf einen
-Aufruf. Vorhanden seit `v6.7.0.0`.
+*Abhilfe:* `$this->addColumn($connection, 'tabelle', 'spalte', 'VARCHAR(255)')` — **ohne
+irgendetwas einzubinden**. `MigrationStep` bindet den Trait selbst ein (Zeile 16), die Methode
+steht also in jeder Migration schon bereit; ein eigenes `use AddColumnTrait;` ist überflüssig.
+Sie bringt die Existenzprüfung mit, die Migration schrumpft auf einen Aufruf. Vorhanden seit
+`v6.7.0.0`.
+
+*Und sie ist dafür gedacht:* Weder `AddColumnTrait` noch `MigrationStep` tragen `@internal`.
+Im selben Ordner sind fünf Klassen so markiert — `MigrationRuntime`, `MigrationCollection`,
+`MigrationSource`, `MigrationCollectionLoader`, `IndexerQueuer` —, die vier Helfer-Traits und
+`MigrationStep` dagegen nicht. Die Grenze zwischen Maschinerie und Werkzeug ist dort bewusst
+gezogen.
 
 ### Spalte und Nebenbedingung nicht in einer Anweisung
 
