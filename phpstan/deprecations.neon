@@ -1,0 +1,19 @@
+# Verworfene Aufrufe sichtbar machen.
+#
+# Warum das hier steht: Der Extension Verifier bringt `phpstan/phpstan-deprecation-rules` in
+# seinem Werkzeugordner mit, bindet es in seiner eigenen Konfiguration aber NICHT ein (am
+# 21.09.2026 an `shopware-cli` 0.18.3 nachgesehen). Verworfene Aufrufe fallen dem offiziellen
+# Prüfwerkzeug also nicht auf — wohl aber dem Menschen, der danach prüft.
+#
+# Einbinden in der phpstan.neon(.dist) der Erweiterung:
+#
+#     includes:
+#         - vendor/depa/shopware-extension-checks/phpstan/deprecations.neon
+#
+# Voraussetzung ist `phpstan/phpstan-deprecation-rules` in den Entwicklungs-Abhängigkeiten.
+#
+# Achtung: Ob ein Aufruf als verworfen gilt, entscheidet die Fassung der Abhängigkeit, gegen die
+# analysiert wird. Wer gegen ältere Stände prüft als die Store-Prüfung, sieht weniger als sie.
+
+includes:
+    - ../../../phpstan/phpstan-deprecation-rules/rules.neon
