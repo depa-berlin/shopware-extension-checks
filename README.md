@@ -119,19 +119,27 @@ in einem Zug nach. Von Hand alle drei ändern, sonst wirft der Kern beim Laden
 ### Jede Admin-Oberfläche an ein Recht binden
 
 Keine PHP-Testklasse, sondern eine JS-Datei, die der Jest-Lauf des Plugins einbindet — denn
-geprüft wird das **echte registrierte Objekt**, nicht der Dateitext:
+geprüft wird das **echte registrierte Objekt**, nicht der Dateitext. Im Plugin sind es fünf Zeilen:
 
 ```js
 // src/Resources/app/administration/src/acl-wiring.spec.js
-const checkAclWiring = require('../../../../../vendor/depa/shopware-extension-checks/js/acl-wiring');
+import checkAclWiring from '../../../../../vendor/depa/shopware-extension-checks/js/acl-wiring';
 
-describe('Rechte der Admin-Oberflächen', () => {
-    const { modules, open } = checkAclWiring(() => require('./main.js'));
+it('bindet jede Admin-Oberfläche an ein Recht', async () => {
+    const { modules, open } = await checkAclWiring(() => import('./main.js'));
 
-    it('lädt die Module des Plugins', () => expect(modules.length).toBeGreaterThan(0));
-    it('bindet jede Oberfläche an ein Recht', () => expect(open).toEqual([]));
+    expect(modules.length).toBeGreaterThan(0);
+    expect(open).toEqual([]);
 });
 ```
+
+**Der Lader wird übergeben und nicht importiert**, und deshalb ist die Funktion async. Ein
+`import './main.js'` in der Spec würde vorgezogen und liefe, bevor der Stub `Shopware` setzt; drei
+Importe in fester Reihenfolge wären richtig, aber ihre Korrektheit hinge an einer Zeilenfolge, die
+„Imports sortieren" jederzeit umschreibt. Ein `require()` wäre synchron und kürzer, verbietet
+Shopwares ESLint in der Erweiterung aber (`@typescript-eslint/no-require-imports`) — und der
+Extension Verifier zählt das als **Fehler**, nicht als Warnung. Alle drei Formen sind am Verifier
+gemessen; diese ist die einzige ohne abgeschaltete Regel und ohne Reihenfolge-Bedingung.
 
 Dazu in der `package.json` des Admins eine Zuordnung für alles, was Jest nicht lesen kann —
 Vorlagen, SCSS und Vite-eigenes wie `import.meta.glob`:
