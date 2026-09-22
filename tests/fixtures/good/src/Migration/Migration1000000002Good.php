@@ -1,14 +1,12 @@
 <?php
 
-// Absichtlich falsch — Vorlage für den Selbsttest. Jede der drei Regeln kommt genau einmal vor.
+// Dieselben drei Vorgänge, richtig gemacht.
 
-$connection->executeStatement('
-    ALTER TABLE `beispiel` ADD COLUMN `name` VARCHAR(255) NULL AFTER `type`;
-');
+$this->addColumn($connection, 'example', 'name', 'VARCHAR(255)');
 
+$connection->executeStatement('ALTER TABLE `product` ADD COLUMN `preset_id` BINARY(16) NULL;');
 $connection->executeStatement('
     ALTER TABLE `product`
-    ADD COLUMN `preset_id` BINARY(16) NULL,
     ADD CONSTRAINT `fk.product.preset_id` FOREIGN KEY (`preset_id`) REFERENCES `preset` (`id`);
 ');
 
@@ -17,7 +15,7 @@ $connection->executeStatement('
         `id` BINARY(16) NOT NULL,
         `preset_id` BINARY(16) NOT NULL,
         `property_group_id` BINARY(16) NOT NULL,
-        `property_group_option_id` BINARY(16) NULL,
+        `property_group_option_id` BINARY(16) NOT NULL,
         PRIMARY KEY (`id`),
         UNIQUE KEY `uniq.preset_option` (`preset_id`, `property_group_id`, `property_group_option_id`)
     ) ENGINE = InnoDB;

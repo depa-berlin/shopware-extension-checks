@@ -108,6 +108,34 @@ fallen dem offiziellen Werkzeug also nicht auf — dem Menschen, der danach prü
 analysiert wird. Die Store-Prüfung arbeitet mit neueren Ständen als der Arbeitsrechner. Wer den
 Unterschied nicht will, analysiert in der CI gegen den höchsten unterstützten Stand.
 
+## Was die Regeln lesen
+
+Gelesen wird **nur das SQL**, nicht die Datei: PHP tokenisiert seine eigenen Dateien, und
+übrig bleiben allein die Zeichenketten. Ein Kommentar, in dem „ADD COLUMN" steht, löst also
+nichts aus — vor Version 0.2.0 tat er genau das.
+
+Die Schreibweise ist bewusst großzügig gefasst, denn fremde Plugins schreiben anders als das
+eigene. Erkannt wird jede dieser Formen:
+
+| | |
+|---|---|
+| Rückstriche | freiwillig — `` `tabelle` `` wie `tabelle` |
+| Spalte anhängen | `ADD COLUMN x …` **und** `ADD x …` (in MySQL ist `COLUMN` optional) |
+| Stelle bestimmen | `ADD … AFTER` **und** `MODIFY`/`CHANGE … AFTER` |
+| eindeutiger Schlüssel | im `CREATE TABLE`, als `ALTER TABLE … ADD UNIQUE KEY`, als `CREATE UNIQUE INDEX` |
+| Tabellenrumpf | mehrzeilig **und** in einer Zeile (zerlegt wird an Kommas auf Klammerebene) |
+| Bezeichner mit Punkt | `uniq.tabelle.spalte`, wie Shopware seine Schlüssel benennt |
+
+Und über **alle** Migrationen hinweg: Die Spalte entsteht in der einen Datei, der Schlüssel
+darüber kommt in der nächsten. Zieht eine spätere Migration die Spalte auf `NOT NULL`, ist die
+Sache erledigt und die Meldung verschwindet.
+
+*Woher die Liste stammt:* Aus einem Fehlschlag. Die Regeln waren gegen zwei Plugins geschrieben
+und die Selbsttest-Vorlagen in derselben Handschrift — der Selbsttest bestätigte also nur, was
+ohnehin angenommen war. An einem Plugin mit anderer Schreibweise meldeten alle drei Regeln
+nichts, obwohl fünf Fehler darin standen. Seitdem gibt es die Vorlage `schreibweisen`, die
+jeden Fall in einer ungewohnten Form noch einmal stellt.
+
 ## Was hier NICHT hingehört
 
 Regeln, die nur aus Geschmack entstehen. Jede Regel braucht einen Beleg: eine Rückmeldung, eine

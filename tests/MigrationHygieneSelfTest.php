@@ -18,17 +18,40 @@ class MigrationHygieneSelfTest extends TestCase
 {
     public function testItFindsAllThreePatternsInTheBadFixture(): void
     {
-        $checks = $this->checksFor('schlecht');
+        $checks = $this->checksFor('bad');
 
-        static::assertSame(['Migration1000000001Schlecht.php'], $checks->afterFindings());
-        static::assertSame(['Migration1000000001Schlecht.php'], $checks->constraintFindings());
+        static::assertSame(['Migration1000000001Bad.php'], $checks->afterFindings());
+        static::assertSame(['Migration1000000001Bad.php'], $checks->constraintFindings());
 
         // Zwei Fundstellen, und die zweite ist die wichtigere: Dort steht der Schlüssel in einer
         // ANDEREN Datei als die Spalte. Genau die übersah die Regel anfangs.
         static::assertSame(
             [
-                'Migration1000000001Schlecht.php: `preset_option`.`property_group_option_id`',
-                'Migration1000000003NachtraeglicherSchluessel.php: `preset_option`.`property_group_option_id`',
+                'Migration1000000001Bad.php: `preset_option`.`property_group_option_id`',
+                'Migration1000000003LateKey.php: `preset_option`.`property_group_option_id`',
+            ],
+            $checks->uniqueFindings(),
+        );
+    }
+
+    /**
+     * Dieselben Fehler, anders geschrieben. Ohne diesen Fall belegte der Selbsttest nur, dass
+     * die Regeln die Handschrift wiedererkennen, in der auch die Vorlagen verfasst sind — und
+     * genau daran scheiterten sie am 22.09.2026 an einem fremden Plugin.
+     */
+    public function testItFindsTheSameMistakesInAnotherHandwriting(): void
+    {
+        $checks = $this->checksFor('variants');
+
+        // `MODIFY … AFTER` statt `ADD COLUMN … AFTER`
+        static::assertSame(['Migration3000000001Variants.php'], $checks->afterFindings());
+        // `ADD `col`` ohne das Wort COLUMN, mit Nebenbedingung daneben
+        static::assertSame(['Migration3000000001Variants.php'], $checks->constraintFindings());
+        // ohne Rückstriche; und als eigenständiges CREATE UNIQUE INDEX auf eine Einzeiler-Tabelle
+        static::assertSame(
+            [
+                'Migration3000000001Variants.php: `no_backticks`.`option_id`',
+                'Migration3000000001Variants.php: `with_index`.`option_id`',
             ],
             $checks->uniqueFindings(),
         );
@@ -36,7 +59,7 @@ class MigrationHygieneSelfTest extends TestCase
 
     public function testItLeavesTheGoodFixtureAlone(): void
     {
-        $checks = $this->checksFor('gut');
+        $checks = $this->checksFor('good');
 
         static::assertSame([], $checks->afterFindings());
         static::assertSame([], $checks->constraintFindings());
@@ -46,7 +69,7 @@ class MigrationHygieneSelfTest extends TestCase
     /** Ohne Migrationsverzeichnis gibt es nichts zu beanstanden, nicht etwas zu melden. */
     public function testAnExtensionWithoutMigrationsPasses(): void
     {
-        $checks = $this->checksFor('gibt-es-nicht');
+        $checks = $this->checksFor('does-not-exist');
 
         static::assertSame([], $checks->afterFindings());
         static::assertSame([], $checks->constraintFindings());
@@ -57,7 +80,7 @@ class MigrationHygieneSelfTest extends TestCase
     {
         // Kein eigener Konstruktor: PHPUnit hat den seinen final gesetzt. Die Vorlage wandert
         // deshalb als Eigenschaft hinein, nachdem das Objekt steht.
-        $checks = new class('pruefung') extends MigrationHygiene {
+        $checks = new class('checks') extends MigrationHygiene {
             public string $fixture = '';
 
             protected function pluginRoot(): string

@@ -1,7 +1,7 @@
 <?php
 
 // Der Schlüssel kommt SPÄTER als die Spalte — der Fall, an dem die Store-Prüfung wirklich hing.
-// `property_group_option_id` entsteht NULL-fähig in Migration1000000001Schlecht.php; wer nur in
+// `property_group_option_id` entsteht NULL-fähig in Migration1000000001Bad.php; wer nur in
 // diese Datei hier schaut, sieht davon nichts.
 
 $connection->executeStatement('

@@ -19,9 +19,33 @@ use PHPUnit\Framework\TestCase;
  *
  * Die Klasse weiß nichts über das Plugin: kein Name, kein Namensraum, keine Tabelle. Fehlt das
  * Migrationsverzeichnis, überspringt sie sich, statt rot zu werden.
+ *
+ * **Gelesen wird nur das SQL, nicht die Datei.** PHP tokenisiert seine eigenen Dateien, und aus
+ * den Tokens bleiben allein die Zeichenketten übrig. Ohne das sprang die Prüfung auf einen
+ * KOMMENTAR an, in dem „ADD COLUMN" stand — eine Prüfung, die auf Prosa anschlägt, verliert ihr
+ * Ansehen beim ersten Mal.
+ *
+ * **Schreibweisen sind absichtlich großzügig gefasst**, denn fremde Plugins schreiben anders:
+ * Rückstriche sind überall freiwillig, `ADD` gilt mit und ohne das Wort `COLUMN`, ein
+ * Tabellenrumpf wird an Kommas auf Klammerebene zerlegt statt zeilenweise, und ein
+ * `CREATE UNIQUE INDEX` zählt wie ein `UNIQUE KEY`.
  */
 abstract class MigrationHygiene extends TestCase
 {
+    /**
+     * Ein Bezeichner — mit Rückstrichen oder ohne.
+     *
+     * Der Punkt gehört dazu: Shopware benennt Schlüssel `uniq.tabelle.spalten` und
+     * `fk.tabelle.spalte`. Ohne ihn brach das Muster genau an den Namen, die im Kern üblich sind.
+     */
+    private const NAME = '`?([A-Za-z0-9_.]+)`?';
+
+    /** Wörter, die nach `ADD` oder am Anfang einer Klausel KEINE Spalte einleiten. */
+    private const NOT_A_COLUMN = [
+        'CONSTRAINT', 'FOREIGN', 'PRIMARY', 'UNIQUE', 'INDEX', 'KEY',
+        'FULLTEXT', 'SPATIAL', 'CHECK', 'PARTITION',
+    ];
+
     /** Wurzel der Erweiterung — das Verzeichnis, in dem `src/` liegt. */
     abstract protected function pluginRoot(): string;
 
@@ -38,16 +62,17 @@ abstract class MigrationHygiene extends TestCase
      * `AFTER` zwingt MySQL, die ganze Tabelle zu kopieren, statt die Spalte sofort anzuhängen.
      *
      * Das ist keine Auslegung: Shopwares eigener `AddColumnTrait` lässt `AFTER` deshalb gar nicht
-     * erst zu und schreibt den Grund als Kommentar daneben.
+     * erst zu und schreibt den Grund als Kommentar daneben. Gilt genauso fürs Umsortieren einer
+     * vorhandenen Spalte per `MODIFY`/`CHANGE` — dieselbe Kopie, derselbe Preis.
      */
     public function testNoColumnIsAddedAfterAnother(): void
     {
         $found = $this->findColumnsAddedAfterAnother();
 
         static::assertSame([], $found, implode("\n", [
-            '`ADD COLUMN … AFTER …` kopiert bei MySQL die ganze Tabelle, statt die Spalte sofort',
-            'anzuhängen. Shopwares addColumn() lässt `AFTER` deshalb nicht zu — nimm es statt des',
-            'eigenen ALTER TABLE: MigrationStep bringt es mit, Existenzprüfung inklusive.',
+            '`AFTER` bestimmt die Stelle einer Spalte und kopiert bei MySQL dafür die ganze',
+            'Tabelle. Shopwares addColumn() lässt es deshalb nicht zu — nimm es statt des eigenen',
+            'ALTER TABLE: MigrationStep bringt es mit, Existenzprüfung inklusive.',
             'Betroffen: ' . implode(', ', $found),
         ]));
     }
@@ -93,12 +118,16 @@ abstract class MigrationHygiene extends TestCase
         $found = [];
 
         foreach ($this->migrations() as $file => $sql) {
-            if (preg_match('/ADD\s+COLUMN[^;]*\bAFTER\b/is', $sql) === 1) {
-                $found[] = basename($file);
+            foreach ($this->alterStatements($sql) as $statement) {
+                // In einem ALTER TABLE heißt `AFTER` immer „an diese Stelle". Ein gleichnamiges
+                // Feld stünde in Rückstrichen und ist damit ausgenommen.
+                if (preg_match('/(?<!`)\bAFTER\b(?!`)/i', $statement) === 1) {
+                    $found[] = basename($file);
+                }
             }
         }
 
-        return $found;
+        return array_values(array_unique($found));
     }
 
     /** @return list<string> */
@@ -108,8 +137,11 @@ abstract class MigrationHygiene extends TestCase
 
         foreach ($this->migrations() as $file => $sql) {
             foreach ($this->alterStatements($sql) as $statement) {
-                $addsColumn = preg_match('/\bADD\s+COLUMN\b/i', $statement) === 1;
-                $addsConstraint = preg_match('/\bADD\s+(CONSTRAINT|FOREIGN\s+KEY|INDEX|KEY|UNIQUE)\b/i', $statement) === 1;
+                $addsColumn = $this->addedColumns($statement) !== [];
+                $addsConstraint = preg_match(
+                    '/\bADD\s+(CONSTRAINT|FOREIGN\s+KEY|INDEX|KEY|UNIQUE|PRIMARY|FULLTEXT|SPATIAL|CHECK)\b/i',
+                    $statement,
+                ) === 1;
 
                 if ($addsColumn && $addsConstraint) {
                     $found[] = basename($file);
@@ -166,8 +198,10 @@ abstract class MigrationHygiene extends TestCase
                     continue;
                 }
 
-                foreach ($this->addedNullableColumns($statement) as $column) {
-                    $nullable[$table][] = $column;
+                foreach ($this->addedColumns($statement) as [$column, $rest]) {
+                    if (stripos($rest, 'NOT NULL') === false) {
+                        $nullable[$table][] = $column;
+                    }
                 }
 
                 foreach ($this->columnsMadeNotNull($statement) as $column) {
@@ -180,8 +214,9 @@ abstract class MigrationHygiene extends TestCase
     }
 
     /**
-     * Jede Spalte, die ein `UNIQUE`-Schlüssel nennt — mit Tabelle und Datei. Erfasst beide
-     * Schreibweisen: im Rumpf eines `CREATE TABLE` und als nachgereichtes `ALTER TABLE`.
+     * Jede Spalte, die ein `UNIQUE`-Schlüssel nennt — mit Tabelle und Datei. Erfasst alle drei
+     * Schreibweisen: im Rumpf eines `CREATE TABLE`, als nachgereichtes `ALTER TABLE` und als
+     * eigenständiges `CREATE UNIQUE INDEX`.
      *
      * @return list<array{string, string, string}>
      */
@@ -207,15 +242,188 @@ abstract class MigrationHygiene extends TestCase
                     $found[] = [$file, $table, $column];
                 }
             }
+
+            $pattern = '/CREATE\s+UNIQUE\s+INDEX\s+' . self::NAME . '\s+ON\s+' . self::NAME . '\s*\(([^)]+)\)/i';
+            preg_match_all($pattern, $sql, $matches, PREG_SET_ORDER);
+
+            foreach ($matches as $match) {
+                foreach ($this->namesIn($match[3]) as $column) {
+                    $found[] = [$file, $match[2], $column];
+                }
+            }
         }
 
         return $found;
     }
 
+    /**
+     * Die Migrationen als `Pfad => SQL`. Ohne Verzeichnis bleibt die Liste leer, und die
+     * Prüfungen laufen gegenstandslos durch — eine Erweiterung ohne eigene Tabellen ist in
+     * Ordnung, nicht verdächtig.
+     *
+     * @return array<string, string>
+     */
+    private function migrations(): array
+    {
+        $files = glob($this->migrationDirectory() . '/*.php') ?: [];
+        $migrations = [];
+
+        foreach ($files as $file) {
+            $migrations[$file] = $this->sqlIn(file_get_contents($file) ?: '');
+        }
+
+        return $migrations;
+    }
+
+    /**
+     * Das SQL einer PHP-Datei: alles, was in einer Zeichenkette steht — einfach, doppelt oder
+     * als Heredoc. Kommentare und Code fallen weg, denn PHP sortiert sie selbst aus.
+     */
+    private function sqlIn(string $php): string
+    {
+        $strings = [\T_CONSTANT_ENCAPSED_STRING, \T_ENCAPSED_AND_WHITESPACE, \T_INLINE_HTML];
+        $sql = '';
+
+        foreach (token_get_all($php) as $token) {
+            if (is_array($token) && in_array($token[0], $strings, true)) {
+                $sql .= "\n" . $token[1];
+            }
+        }
+
+        return $sql;
+    }
+
+    /**
+     * Die einzelnen `ALTER TABLE`-Anweisungen. Getrennt wird am Semikolon, denn nur was in
+     * DERSELBEN Anweisung steht, teilt sich den Tabellen-Neuaufbau.
+     *
+     * @return list<string>
+     */
+    private function alterStatements(string $sql): array
+    {
+        preg_match_all('/ALTER\s+TABLE[^;]*/is', $sql, $matches);
+
+        return $matches[0];
+    }
+
+    /**
+     * Die Rümpfe aller `CREATE TABLE`-Anweisungen, je Tabellenname.
+     *
+     * Die schließende Klammer wird gezählt, nicht geraten: `BINARY(16)` und `DECIMAL(10,2)`
+     * bringen jede Abkürzung über einen regulären Ausdruck durcheinander.
+     *
+     * @return array<string, string>
+     */
+    private function createTableBodies(string $sql): array
+    {
+        $pattern = '/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?' . self::NAME . '\s*\(/i';
+        $bodies = [];
+        $offset = 0;
+
+        while (preg_match($pattern, $sql, $match, \PREG_OFFSET_CAPTURE, $offset) === 1) {
+            $start = $match[0][1] + strlen($match[0][0]);
+            $end = $this->closingParenthesis($sql, $start);
+
+            if ($end === null) {
+                break;
+            }
+
+            $bodies[$match[1][0]] = substr($sql, $start, $end - $start);
+            $offset = $end;
+        }
+
+        return $bodies;
+    }
+
+    /** Die Stelle der Klammer, die die bei `$start` offene wieder schließt. */
+    private function closingParenthesis(string $sql, int $start): ?int
+    {
+        $depth = 1;
+        $length = strlen($sql);
+
+        for ($position = $start; $position < $length; $position++) {
+            $depth += match ($sql[$position]) {
+                '(' => 1,
+                ')' => -1,
+                default => 0,
+            };
+
+            if ($depth === 0) {
+                return $position;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Ein Tabellenrumpf, zerlegt in seine Klauseln: Spalten, Schlüssel, Nebenbedingungen.
+     *
+     * Getrennt wird an Kommas auf Klammerebene 0 — zeilenweise ginge auch, aber nur solange
+     * jemand die Tabelle mehrzeilig schreibt. Ein Einzeiler ist genauso gültig.
+     *
+     * @return list<string>
+     */
+    private function clausesIn(string $body): array
+    {
+        $clauses = [];
+        $current = '';
+        $depth = 0;
+
+        foreach (str_split($body) as $character) {
+            if ($character === ',' && $depth === 0) {
+                $clauses[] = trim($current);
+                $current = '';
+                continue;
+            }
+
+            $depth += match ($character) {
+                '(' => 1,
+                ')' => -1,
+                default => 0,
+            };
+            $current .= $character;
+        }
+
+        $clauses[] = trim($current);
+
+        return array_values(array_filter($clauses, static fn (string $clause) => $clause !== ''));
+    }
+
+    /**
+     * Spalten eines Tabellenrumpfs ohne `NOT NULL` — also die, in denen NULL stehen darf.
+     *
+     * @return list<string>
+     */
+    private function nullableColumnsIn(string $body): array
+    {
+        $columns = [];
+
+        foreach ($this->clausesIn($body) as $clause) {
+            $column = $this->columnDefinedBy($clause);
+
+            if ($column !== null && stripos($clause, 'NOT NULL') === false) {
+                $columns[] = $column;
+            }
+        }
+
+        return $columns;
+    }
+
+    /** Der Spaltenname, wenn die Klausel eine Spalte definiert — sonst null. */
+    private function columnDefinedBy(string $clause): ?string
+    {
+        if (preg_match('/^' . self::NAME . '\s+\S/', $clause, $match) !== 1) {
+            return null;
+        }
+
+        return in_array(strtoupper($match[1]), self::NOT_A_COLUMN, true) ? null : $match[1];
+    }
+
     /** Die Tabelle, die eine `ALTER TABLE`-Anweisung anfasst. */
     private function tableOf(string $statement): ?string
     {
-        if (preg_match('/ALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?/i', $statement, $match) !== 1) {
+        if (preg_match('/ALTER\s+TABLE\s+' . self::NAME . '/i', $statement, $match) !== 1) {
             return null;
         }
 
@@ -223,18 +431,26 @@ abstract class MigrationHygiene extends TestCase
     }
 
     /**
-     * Spalten, die eine `ALTER TABLE`-Anweisung anhängt, ohne sie auf `NOT NULL` zu setzen.
+     * Die Spalten, die eine Anweisung anhängt — je Spalte ihr Name und der Rest ihrer Klausel.
      *
-     * @return list<string>
+     * `COLUMN` ist in MySQL freiwillig (`ALTER TABLE t ADD spalte INT`), deshalb entscheidet das
+     * WORT hinter `ADD`: Ist es `CONSTRAINT`, `INDEX`, `KEY` und so weiter, ist es keine Spalte.
+     *
+     * @return list<array{string, string}>
      */
-    private function addedNullableColumns(string $statement): array
+    private function addedColumns(string $statement): array
     {
-        preg_match_all('/ADD\s+COLUMN\s+`([^`]+)`([^,;]*)/i', $statement, $matches, PREG_SET_ORDER);
+        preg_match_all(
+            '/\bADD\s+(?:COLUMN\s+)?' . self::NAME . '([^,;]*)/i',
+            $statement,
+            $matches,
+            \PREG_SET_ORDER,
+        );
 
         $columns = [];
         foreach ($matches as $match) {
-            if (stripos($match[2], 'NOT NULL') === false) {
-                $columns[] = $match[1];
+            if (!in_array(strtoupper($match[1]), self::NOT_A_COLUMN, true)) {
+                $columns[] = [$match[1], $match[2]];
             }
         }
 
@@ -256,86 +472,8 @@ abstract class MigrationHygiene extends TestCase
 
         $columns = [];
         foreach ($matches[1] as $clause) {
-            if (stripos($clause, 'NOT NULL') === false) {
-                continue;
-            }
-
-            preg_match_all('/`([^`]+)`/', $clause, $names);
-            $columns = array_merge($columns, $names[1]);
-        }
-
-        return $columns;
-    }
-
-    /**
-     * Die Migrationen als `Pfad => Inhalt`. Ohne Verzeichnis bleibt die Liste leer, und die
-     * Prüfungen laufen gegenstandslos durch — eine Erweiterung ohne eigene Tabellen ist in
-     * Ordnung, nicht verdächtig.
-     *
-     * @return array<string, string>
-     */
-    private function migrations(): array
-    {
-        $files = glob($this->migrationDirectory() . '/*.php') ?: [];
-        $migrations = [];
-
-        foreach ($files as $file) {
-            $migrations[$file] = file_get_contents($file) ?: '';
-        }
-
-        return $migrations;
-    }
-
-    /**
-     * Die einzelnen `ALTER TABLE`-Anweisungen einer Datei. Getrennt wird am Semikolon, denn
-     * nur was in DERSELBEN Anweisung steht, teilt sich den Tabellen-Neuaufbau.
-     *
-     * @return list<string>
-     */
-    private function alterStatements(string $sql): array
-    {
-        preg_match_all('/ALTER\s+TABLE[^;]*/is', $sql, $matches);
-
-        return $matches[0];
-    }
-
-    /**
-     * Die Rümpfe aller `CREATE TABLE`-Anweisungen, je Tabellenname.
-     *
-     * @return array<string, string>
-     */
-    private function createTableBodies(string $sql): array
-    {
-        preg_match_all('/CREATE\s+TABLE[^`]*`([^`]+)`\s*\((.*?)\)\s*(?:ENGINE|;)/is', $sql, $matches, PREG_SET_ORDER);
-
-        $bodies = [];
-        foreach ($matches as $match) {
-            $bodies[$match[1]] = $match[2];
-        }
-
-        return $bodies;
-    }
-
-    /**
-     * Spalten eines `CREATE TABLE`-Rumpfs ohne `NOT NULL` — also die, in denen NULL stehen darf.
-     *
-     * @return list<string>
-     */
-    private function nullableColumnsIn(string $body): array
-    {
-        $columns = [];
-
-        foreach (explode("\n", $body) as $line) {
-            $line = trim($line);
-
-            // Nur Spaltendefinitionen: Sie beginnen mit dem Namen in Rückstrichen. Schlüssel
-            // und Nebenbedingungen fangen mit einem Wort an (PRIMARY, UNIQUE, CONSTRAINT …).
-            if (preg_match('/^`([^`]+)`\s+\S/', $line, $match) !== 1) {
-                continue;
-            }
-
-            if (stripos($line, 'NOT NULL') === false) {
-                $columns[] = $match[1];
+            if (stripos($clause, 'NOT NULL') !== false) {
+                $columns = array_merge($columns, $this->namesIn($clause));
             }
         }
 
@@ -347,16 +485,33 @@ abstract class MigrationHygiene extends TestCase
      *
      * @return list<string>
      */
-    private function uniqueKeyColumnsIn(string $body): array
+    private function uniqueKeyColumnsIn(string $text): array
     {
-        preg_match_all('/UNIQUE\s+(?:KEY|INDEX)?[^(]*\(([^)]+)\)/i', $body, $matches);
+        preg_match_all('/\bUNIQUE\b[^(;]*\(([^)]+)\)/i', $text, $matches);
 
         $columns = [];
         foreach ($matches[1] as $list) {
-            preg_match_all('/`([^`]+)`/', $list, $names);
-            $columns = array_merge($columns, $names[1]);
+            $columns = array_merge($columns, $this->namesIn($list));
         }
 
         return $columns;
+    }
+
+    /**
+     * Die Bezeichner einer Aufzählung wie `` `a`, b, `c` `` — Rückstriche sind freiwillig.
+     *
+     * @return list<string>
+     */
+    private function namesIn(string $list): array
+    {
+        $names = [];
+
+        foreach (explode(',', $list) as $entry) {
+            if (preg_match('/' . self::NAME . '/', trim($entry), $match) === 1) {
+                $names[] = $match[1];
+            }
+        }
+
+        return $names;
     }
 }
