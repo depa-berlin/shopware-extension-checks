@@ -112,6 +112,27 @@ abstract class MigrationHygiene extends TestCase
         ]));
     }
 
+    /**
+     * Der Zeitstempel im Klassennamen und der aus `getCreationTimestamp()` müssen derselbe sein.
+     *
+     * Sonst laufen Fundreihenfolge und Ausführungsreihenfolge auseinander: Shopware findet die
+     * Migrationen per `scandir` nach DATEINAME (`MigrationCollection.php:161`), ausgeführt werden
+     * sie aber nach `creation_timestamp` ASC (`MigrationRuntime.php:122`). Eine Migration, die im
+     * Ordner zuletzt steht, läuft dann zuerst — ihr Fremdschlüssel zeigt auf eine Tabelle, die es
+     * noch nicht gibt, und beim nächsten Plugin sieht es umgekehrt aus.
+     */
+    public function testEveryMigrationNameCarriesItsCreationTimestamp(): void
+    {
+        $found = $this->findNamesDisagreeingWithTheirTimestamp();
+
+        static::assertSame([], $found, implode("\n", [
+            'Gefunden werden Migrationen nach Dateiname, ausgeführt nach `creation_timestamp`.',
+            'Stimmen die beiden Zahlen nicht überein, ist die Reihenfolge im Ordner eine andere als',
+            'die beim Installieren. `bin/console migration:refresh` zieht beide Stellen zusammen nach.',
+            'Betroffen: ' . implode(', ', $found),
+        ]));
+    }
+
     /** @return list<string> */
     protected function findColumnsAddedAfterAnother(): array
     {
@@ -161,6 +182,42 @@ abstract class MigrationHygiene extends TestCase
         foreach ($this->uniqueKeyColumnsPerTable() as [$file, $table, $column]) {
             if (in_array($column, $nullable[$table] ?? [], true)) {
                 $found[] = basename($file) . ": `{$table}`.`{$column}`";
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Migrationen, deren Name eine andere Zahl nennt als ihr `getCreationTimestamp()`.
+     *
+     * Eine Datei OHNE diese Methode bleibt außen vor: Im Migrationsverzeichnis dürfen laut Kern
+     * auch Traits und Schnittstellen liegen (`MigrationCollection.php:174`), und die tragen keinen
+     * Zeitstempel.
+     *
+     * @return list<string>
+     */
+    protected function findNamesDisagreeingWithTheirTimestamp(): array
+    {
+        $found = [];
+
+        foreach ($this->migrationFiles() as $file) {
+            $declared = $this->creationTimestampIn(file_get_contents($file) ?: '');
+            $isAMigration = $declared !== null;
+
+            if (!$isAMigration) {
+                continue;
+            }
+
+            $inName = $this->timestampInName(basename($file));
+
+            if ($inName !== $declared) {
+                $found[] = sprintf(
+                    '%s: Name %s, getCreationTimestamp() %s',
+                    basename($file),
+                    $inName ?? '(ohne Zahl)',
+                    $declared,
+                );
             }
         }
 
@@ -265,14 +322,77 @@ abstract class MigrationHygiene extends TestCase
      */
     private function migrations(): array
     {
-        $files = glob($this->migrationDirectory() . '/*.php') ?: [];
         $migrations = [];
 
-        foreach ($files as $file) {
+        foreach ($this->migrationFiles() as $file) {
             $migrations[$file] = $this->sqlIn(file_get_contents($file) ?: '');
         }
 
         return $migrations;
+    }
+
+    /**
+     * Die Migrationsdateien, nach Namen sortiert — wie `scandir` sie im Kern auch liefert.
+     *
+     * @return list<string>
+     */
+    private function migrationFiles(): array
+    {
+        return glob($this->migrationDirectory() . '/*.php') ?: [];
+    }
+
+    /**
+     * Der Zeitstempel im Dateinamen, gelesen mit dem Muster, das auch Shopwares
+     * `migration:refresh` dafür benutzt (`RefreshMigrationCommand.php:61`).
+     *
+     * Dateiname und Klassenname sind dabei dasselbe: Weichen sie ab, wirft der Kern beim Laden
+     * (`MigrationCollection.php:174`) — das fällt laut auf und braucht hier keine Prüfung.
+     */
+    private function timestampInName(string $filename): ?string
+    {
+        if (preg_match('/^Migration(\d+)/', $filename, $match) !== 1) {
+            return null;
+        }
+
+        return $match[1];
+    }
+
+    /**
+     * Die Zahl, die `getCreationTimestamp()` zurückgibt — null, wenn die Datei die Methode nicht
+     * hat oder etwas anderes als eine Zahl zurückgibt.
+     *
+     * Wieder über die Tokens statt über den Dateitext: In einem Kommentar steht `return 1234;`
+     * genauso überzeugend da wie im Code. Gelesen wird nur das erste `return` NACH dem
+     * Methodennamen, damit keine Zahl von irgendwo sonst in der Datei einspringt.
+     */
+    private function creationTimestampIn(string $php): ?string
+    {
+        $noise = [\T_WHITESPACE, \T_COMMENT, \T_DOC_COMMENT];
+        $tokens = array_values(array_filter(
+            token_get_all($php),
+            static fn (array|string $token) => !is_array($token) || !in_array($token[0], $noise, true),
+        ));
+
+        $insideTheMethod = false;
+
+        foreach ($tokens as $index => $token) {
+            if (!is_array($token)) {
+                continue;
+            }
+
+            if ($token[0] === \T_STRING && $token[1] === 'getCreationTimestamp') {
+                $insideTheMethod = true;
+                continue;
+            }
+
+            if ($insideTheMethod && $token[0] === \T_RETURN) {
+                $next = $tokens[$index + 1] ?? null;
+
+                return is_array($next) && $next[0] === \T_LNUMBER ? $next[1] : null;
+            }
+        }
+
+        return null;
     }
 
     /**

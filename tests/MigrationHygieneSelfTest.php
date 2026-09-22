@@ -8,7 +8,7 @@ use Depa\ShopwareChecks\MigrationHygiene;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Prüft die Prüfung: Findet sie die drei Muster in einer absichtlich falschen Migration, und
+ * Prüft die Prüfung: Findet sie jedes Muster in einer absichtlich falschen Migration, und
  * lässt sie die richtige in Ruhe?
  *
  * Ohne das wäre nicht belegt, dass die Ausdrücke greifen — eine Regel, die nie anschlägt, sieht
@@ -57,6 +57,24 @@ class MigrationHygieneSelfTest extends TestCase
         );
     }
 
+    /**
+     * Zeitstempel im Namen gegen den zurückgegebenen. Die Vorlage hält vier Fälle bereit: zwei,
+     * die auffallen müssen, und zwei, über die hinwegzusehen ist — die stimmige Migration und ein
+     * Trait, der im Migrationsordner liegen darf.
+     */
+    public function testItFindsNamesThatDisagreeWithTheirTimestamp(): void
+    {
+        $checks = $this->checksFor('timestamps');
+
+        static::assertSame(
+            [
+                'Migration1000000004Mismatch.php: Name 1000000004, getCreationTimestamp() 1000000009',
+                'NamelessMigration.php: Name (ohne Zahl), getCreationTimestamp() 1000000006',
+            ],
+            $checks->timestampFindings(),
+        );
+    }
+
     public function testItLeavesTheGoodFixtureAlone(): void
     {
         $checks = $this->checksFor('good');
@@ -64,6 +82,7 @@ class MigrationHygieneSelfTest extends TestCase
         static::assertSame([], $checks->afterFindings());
         static::assertSame([], $checks->constraintFindings());
         static::assertSame([], $checks->uniqueFindings());
+        static::assertSame([], $checks->timestampFindings());
     }
 
     /** Ohne Migrationsverzeichnis gibt es nichts zu beanstanden, nicht etwas zu melden. */
@@ -74,6 +93,7 @@ class MigrationHygieneSelfTest extends TestCase
         static::assertSame([], $checks->afterFindings());
         static::assertSame([], $checks->constraintFindings());
         static::assertSame([], $checks->uniqueFindings());
+        static::assertSame([], $checks->timestampFindings());
     }
 
     private function checksFor(string $fixture): object
@@ -104,6 +124,12 @@ class MigrationHygieneSelfTest extends TestCase
             public function uniqueFindings(): array
             {
                 return $this->findUniqueKeysOverNullableColumns();
+            }
+
+            /** @return list<string> */
+            public function timestampFindings(): array
+            {
+                return $this->findNamesDisagreeingWithTheirTimestamp();
             }
         };
 

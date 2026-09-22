@@ -91,6 +91,31 @@ Ersatzwert abbildet, oder im `PreWriteValidationEvent` prüfen. **Eine Prüfung 
 genügt nicht** — sie deckt einen von mehreren Schreibwegen ab und nichts außerhalb der
 Oberfläche.
 
+### Name und Zeitstempel müssen übereinstimmen
+
+Die Zahl im Dateinamen (`Migration1774275954PropertyPreset.php`) und der Rückgabewert von
+`getCreationTimestamp()` müssen dieselbe sein. Sonst laufen zwei Reihenfolgen auseinander:
+**Gefunden** werden Migrationen per `scandir` nach Dateiname
+([`MigrationCollection.php:161`](https://github.com/shopware/shopware/blob/trunk/src/Core/Framework/Migration/MigrationCollection.php)),
+**ausgeführt** nach `creation_timestamp` ASC
+([`MigrationRuntime.php:122`](https://github.com/shopware/shopware/blob/trunk/src/Core/Framework/Migration/MigrationRuntime.php)).
+Eine Migration, die im Ordner zuletzt steht, läuft dann zuerst — ihr Fremdschlüssel zeigt auf
+eine Tabelle, die es noch nicht gibt. Beim nächsten Plugin sieht derselbe Fehler umgekehrt aus,
+und niemand sucht ihn in der Reihenfolge.
+
+Ein Name ganz ohne Zahl fällt genauso auf: `bin/console migration:refresh` kommt damit nicht
+zurecht (`couldNotDetermineTimestamp`), und der Ordner sagt dann gar nichts über die Reihenfolge.
+Dateien **ohne** `getCreationTimestamp()` bleiben außen vor — im Migrationsverzeichnis dürfen laut
+Kern auch Traits und Schnittstellen liegen.
+
+*Herkunft:* Store-Rückmeldung zu `DepaVariantQuickSelect`: `Migration20240301PropertyPreset.php`
+gab `1774275954` zurück. Die Regel gegen den damaligen Stand laufen gelassen — sie meldet genau
+diese Datei.
+
+*Abhilfe:* `bin/console migration:refresh <Datei>` zieht Dateiname, Klassenname und Rückgabewert
+in einem Zug nach. Von Hand alle drei ändern, sonst wirft der Kern beim Laden
+(`invalidMigrationClass`).
+
 ### Verworfene Aufrufe sichtbar machen
 
 Keine Testklasse, sondern eine PHPStan-Konfiguration zum Einbinden:
@@ -110,9 +135,11 @@ Unterschied nicht will, analysiert in der CI gegen den höchsten unterstützten 
 
 ## Was die Regeln lesen
 
-Gelesen wird **nur das SQL**, nicht die Datei: PHP tokenisiert seine eigenen Dateien, und
-übrig bleiben allein die Zeichenketten. Ein Kommentar, in dem „ADD COLUMN" steht, löst also
-nichts aus — vor Version 0.2.0 tat er genau das.
+Gelesen wird **nur, was PHP selbst als Code oder Zeichenkette erkennt**, nie der Dateitext: Die
+SQL-Regeln nehmen aus den Tokens die Zeichenketten, die Zeitstempel-Regel nimmt das erste `return`
+hinter dem Methodennamen. Ein Kommentar, in dem „ADD COLUMN" steht, löst also nichts aus — vor
+Version 0.2.0 tat er genau das —, und ein `return 1234;` im Kommentar deckt keine Abweichung zu.
+In den Selbsttest-Vorlagen steht beides drin.
 
 Die Schreibweise ist bewusst großzügig gefasst, denn fremde Plugins schreiben anders als das
 eigene. Erkannt wird jede dieser Formen:
