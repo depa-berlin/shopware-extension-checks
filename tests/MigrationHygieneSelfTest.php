@@ -22,8 +22,14 @@ class MigrationHygieneSelfTest extends TestCase
 
         static::assertSame(['Migration1000000001Schlecht.php'], $checks->afterFindings());
         static::assertSame(['Migration1000000001Schlecht.php'], $checks->constraintFindings());
+
+        // Zwei Fundstellen, und die zweite ist die wichtigere: Dort steht der Schlüssel in einer
+        // ANDEREN Datei als die Spalte. Genau die übersah die Regel anfangs.
         static::assertSame(
-            ['Migration1000000001Schlecht.php: `preset_option`.`property_group_option_id`'],
+            [
+                'Migration1000000001Schlecht.php: `preset_option`.`property_group_option_id`',
+                'Migration1000000003NachtraeglicherSchluessel.php: `preset_option`.`property_group_option_id`',
+            ],
             $checks->uniqueFindings(),
         );
     }

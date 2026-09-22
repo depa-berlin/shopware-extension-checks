@@ -71,8 +71,9 @@ abstract class MigrationHygiene extends TestCase
      * Ein `UNIQUE`-Schlüssel über eine NULL-fähige Spalte bindet nur halb: MySQL zählt zwei NULLs
      * als verschieden, doppelte Zeilen sind also weiterhin möglich.
      *
-     * Geprüft wird je `CREATE TABLE`: Welche Spalten sind NULL-fähig, und nennt ein `UNIQUE KEY`
-     * eine davon?
+     * Geprüft wird über ALLE Migrationen hinweg, nicht je Datei: Die Spalte entsteht in der
+     * einen, der Schlüssel darüber kommt in der nächsten — so lag der Fall, den die Store-Prüfung
+     * beanstandet hat.
      */
     public function testNoUniqueKeyCoversANullableColumn(): void
     {
@@ -122,21 +123,148 @@ abstract class MigrationHygiene extends TestCase
     /** @return list<string> */
     protected function findUniqueKeysOverNullableColumns(): array
     {
+        $nullable = $this->nullableColumnsPerTable();
+        $found = [];
+
+        foreach ($this->uniqueKeyColumnsPerTable() as [$file, $table, $column]) {
+            if (in_array($column, $nullable[$table] ?? [], true)) {
+                $found[] = basename($file) . ": `{$table}`.`{$column}`";
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Welche Spalte welcher Tabelle NULL sein darf — über ALLE Migrationen hinweg.
+     *
+     * Der Blick in eine einzelne Datei genügt nicht: Die Spalte entsteht in der einen Migration,
+     * der Schlüssel darüber kommt Monate später in der nächsten. Genau so lag der Fall, an dem
+     * die Store-Prüfung hing — und genau den übersah diese Regel anfangs.
+     *
+     * Zieht eine spätere Migration die Spalte auf `NOT NULL`, fällt sie wieder heraus: Das ist
+     * ja die Abhilfe, und danach darf die Prüfung nicht weiter mahnen. Die Migrationen laufen
+     * dafür in ihrer Reihenfolge durch (Dateiname = Zeitstempel).
+     *
+     * @return array<string, list<string>>
+     */
+    private function nullableColumnsPerTable(): array
+    {
+        $nullable = [];
+
+        foreach ($this->migrations() as $sql) {
+            foreach ($this->createTableBodies($sql) as $table => $body) {
+                foreach ($this->nullableColumnsIn($body) as $column) {
+                    $nullable[$table][] = $column;
+                }
+            }
+
+            foreach ($this->alterStatements($sql) as $statement) {
+                $table = $this->tableOf($statement);
+
+                if ($table === null) {
+                    continue;
+                }
+
+                foreach ($this->addedNullableColumns($statement) as $column) {
+                    $nullable[$table][] = $column;
+                }
+
+                foreach ($this->columnsMadeNotNull($statement) as $column) {
+                    $nullable[$table] = array_values(array_diff($nullable[$table] ?? [], [$column]));
+                }
+            }
+        }
+
+        return $nullable;
+    }
+
+    /**
+     * Jede Spalte, die ein `UNIQUE`-Schlüssel nennt — mit Tabelle und Datei. Erfasst beide
+     * Schreibweisen: im Rumpf eines `CREATE TABLE` und als nachgereichtes `ALTER TABLE`.
+     *
+     * @return list<array{string, string, string}>
+     */
+    private function uniqueKeyColumnsPerTable(): array
+    {
         $found = [];
 
         foreach ($this->migrations() as $file => $sql) {
             foreach ($this->createTableBodies($sql) as $table => $body) {
-                $nullable = $this->nullableColumns($body);
+                foreach ($this->uniqueKeyColumnsIn($body) as $column) {
+                    $found[] = [$file, $table, $column];
+                }
+            }
 
-                foreach ($this->uniqueKeyColumns($body) as $column) {
-                    if (in_array($column, $nullable, true)) {
-                        $found[] = basename($file) . ": `{$table}`.`{$column}`";
-                    }
+            foreach ($this->alterStatements($sql) as $statement) {
+                $table = $this->tableOf($statement);
+
+                if ($table === null) {
+                    continue;
+                }
+
+                foreach ($this->uniqueKeyColumnsIn($statement) as $column) {
+                    $found[] = [$file, $table, $column];
                 }
             }
         }
 
         return $found;
+    }
+
+    /** Die Tabelle, die eine `ALTER TABLE`-Anweisung anfasst. */
+    private function tableOf(string $statement): ?string
+    {
+        if (preg_match('/ALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?/i', $statement, $match) !== 1) {
+            return null;
+        }
+
+        return $match[1];
+    }
+
+    /**
+     * Spalten, die eine `ALTER TABLE`-Anweisung anhängt, ohne sie auf `NOT NULL` zu setzen.
+     *
+     * @return list<string>
+     */
+    private function addedNullableColumns(string $statement): array
+    {
+        preg_match_all('/ADD\s+COLUMN\s+`([^`]+)`([^,;]*)/i', $statement, $matches, PREG_SET_ORDER);
+
+        $columns = [];
+        foreach ($matches as $match) {
+            if (stripos($match[2], 'NOT NULL') === false) {
+                $columns[] = $match[1];
+            }
+        }
+
+        return $columns;
+    }
+
+    /**
+     * Spalten, die eine Anweisung auf `NOT NULL` zieht.
+     *
+     * Grob: Bei `CHANGE` nennt MySQL alten UND neuen Namen, und beide werden herausgenommen.
+     * Das kann eine Meldung verschlucken, wenn jemand beim Umbenennen gleichzeitig eine zweite
+     * Spalte NULL-fähig lässt — dafür meldet es nie fälschlich etwas als kaputt.
+     *
+     * @return list<string>
+     */
+    private function columnsMadeNotNull(string $statement): array
+    {
+        preg_match_all('/(?:MODIFY|CHANGE)\s+(?:COLUMN\s+)?([^,;]*)/i', $statement, $matches);
+
+        $columns = [];
+        foreach ($matches[1] as $clause) {
+            if (stripos($clause, 'NOT NULL') === false) {
+                continue;
+            }
+
+            preg_match_all('/`([^`]+)`/', $clause, $names);
+            $columns = array_merge($columns, $names[1]);
+        }
+
+        return $columns;
     }
 
     /**
@@ -189,11 +317,11 @@ abstract class MigrationHygiene extends TestCase
     }
 
     /**
-     * Spalten ohne `NOT NULL` — also die, in denen NULL stehen darf.
+     * Spalten eines `CREATE TABLE`-Rumpfs ohne `NOT NULL` — also die, in denen NULL stehen darf.
      *
      * @return list<string>
      */
-    private function nullableColumns(string $body): array
+    private function nullableColumnsIn(string $body): array
     {
         $columns = [];
 
@@ -215,11 +343,11 @@ abstract class MigrationHygiene extends TestCase
     }
 
     /**
-     * Die Spalten, die in einem `UNIQUE`-Schlüssel genannt werden.
+     * Die Spalten, die ein `UNIQUE`-Schlüssel nennt — im Tabellenrumpf wie in einem `ALTER`.
      *
      * @return list<string>
      */
-    private function uniqueKeyColumns(string $body): array
+    private function uniqueKeyColumnsIn(string $body): array
     {
         preg_match_all('/UNIQUE\s+(?:KEY|INDEX)?[^(]*\(([^)]+)\)/i', $body, $matches);
 
