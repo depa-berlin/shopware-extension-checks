@@ -116,6 +116,59 @@ diese Datei.
 in einem Zug nach. Von Hand alle drei ändern, sonst wirft der Kern beim Laden
 (`invalidMigrationClass`).
 
+### Jede Admin-Oberfläche an ein Recht binden
+
+Keine PHP-Testklasse, sondern eine JS-Datei, die der Jest-Lauf des Plugins einbindet — denn
+geprüft wird das **echte registrierte Objekt**, nicht der Dateitext:
+
+```js
+// src/Resources/app/administration/src/acl-wiring.spec.js
+const checkAclWiring = require('../../../../../vendor/depa/shopware-extension-checks/js/acl-wiring');
+
+describe('Rechte der Admin-Oberflächen', () => {
+    const { modules, open } = checkAclWiring(() => require('./main.js'));
+
+    it('lädt die Module des Plugins', () => expect(modules.length).toBeGreaterThan(0));
+    it('bindet jede Oberfläche an ein Recht', () => expect(open).toEqual([]));
+});
+```
+
+Dazu in der `package.json` des Admins eine Zuordnung für alles, was Jest nicht lesen kann —
+Vorlagen, SCSS und Vite-eigenes wie `import.meta.glob`:
+
+```json
+"jest": {
+    "moduleNameMapper": {
+        "\\.(twig|scss)$": "<rootDir>/../../../../vendor/depa/shopware-extension-checks/js/empty-module.js"
+    }
+}
+```
+
+Geprüft wird: Jede Route nennt ein `meta.privilege`, jeder Navigationseintrag und jede
+Einstellungskachel ein `privilege`. Eine Route, die **nur weiterleitet**, ist ausgenommen — ihr
+Recht sitzt am Ziel, und Shopware macht das selbst so (`sw-landing-page`).
+
+*Herkunft:* Store-Rückmeldung zu `DepaVariantQuickSelect`. Das Modul nannte an keiner Stelle ein
+Recht, und es gab keine `addPrivilegeMappingEntry`. Die Regel gegen den damaligen Stand laufen
+gelassen (`8ed0b65^`) — sie meldet alle drei Routen und den Menüeintrag.
+
+*Warum das niemandem auffällt:* `AclService.can()` liefert `true`, sobald gar kein Recht
+dasteht — die Oberfläche ist für jeden Admin-Benutzer offen. Und darüber steht `isAdmin()`, das
+die Prüfung ganz wegkürzt. Wer das Plugin baut, ist Administrator und sieht beim Durchklicken
+nichts.
+
+*Bewusst NICHT geprüft:* ob ein benutztes Recht auch angemeldet ist. Dieselbe Prüfung war
+gebaut und ist wieder herausgeflogen, weil sie beim üblichen Muster **falsch meldet**: Beide
+Plugins hier erweitern Shopwares eigenen `product`-Schlüssel um eigene Rechte
+(`addPrivilegeMappingEntry` mit `key: 'product'`). Danach sieht `product` wie ein eigener
+Schlüssel aus, und eine Route, die `product.creator` verlangt — eine Rolle, die es im Kern
+gibt —, wäre als „nicht angemeldet" gemeldet worden. Wem ein fremder Schlüssel gehört, weiß nur
+eine Installation; das gehört an einen Lauf mit echtem Shop, nicht hierher.
+
+*Die Prüfung prüfen:* `node js/acl-wiring.js` — die Datei bringt ihren eigenen Selbsttest mit
+(kaputtes Modul, stimmiges Modul, Weiterleitung ohne Recht, leerer Lauf). Sie hat keine
+Abhängigkeiten, es braucht also kein npm.
+
 ### Verworfene Aufrufe sichtbar machen
 
 Keine Testklasse, sondern eine PHPStan-Konfiguration zum Einbinden:
@@ -135,7 +188,8 @@ Unterschied nicht will, analysiert in der CI gegen den höchsten unterstützten 
 
 ## Was die Regeln lesen
 
-Gelesen wird **nur, was PHP selbst als Code oder Zeichenkette erkennt**, nie der Dateitext: Die
+Das gilt für die Migrations-Regeln; die ACL-Regel liest gar keinen Text, sondern das registrierte
+Objekt. Gelesen wird **nur, was PHP selbst als Code oder Zeichenkette erkennt**, nie der Dateitext: Die
 SQL-Regeln nehmen aus den Tokens die Zeichenketten, die Zeitstempel-Regel nimmt das erste `return`
 hinter dem Methodennamen. Ein Kommentar, in dem „ADD COLUMN" steht, löst also nichts aus — vor
 Version 0.2.0 tat er genau das —, und ein `return 1234;` im Kommentar deckt keine Abweichung zu.
