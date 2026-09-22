@@ -2,17 +2,6 @@
 
 Wiederverwendbare Prüfungen für Shopware-Erweiterungen.
 
-Jede Regel hier stammt aus einer **Rückmeldung der Shopware-Store-Prüfung** oder aus einer
-Stelle im Shopware-Kern, die eine Falle benennt. Keine steht aus Geschmack da. Zu jeder Regel
-gehört deshalb unten ihre Herkunft — ohne sie ist eine Regel in einem Jahr nicht mehr zu
-verteidigen, und der erste, den sie stört, nimmt sie heraus.
-
-**Der Anlass:** Die Store-Prüfung beanstandet Dinge, die in der Dokumentation nicht stehen. Am
-21.09.2026 nachgesehen — in den fünf Seiten unter `testing/store/` kommen `ALTER TABLE`,
-`unique`, `deprecated` und `ALGORITHM` **kein einziges Mal** vor. Das Wissen existiert, aber es
-steht im Quelltext des Kerns, in der Semantik von MySQL oder in den Annotationen einer
-Abhängigkeit. Was hier liegt, holt es einmalig ein und hält es fest.
-
 ## Verwenden
 
 ```bash
