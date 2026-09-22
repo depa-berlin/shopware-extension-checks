@@ -223,16 +223,5 @@ Sache erledigt und die Meldung verschwindet.
 *Woher die Liste stammt:* Aus einem Fehlschlag. Die Regeln waren gegen zwei Plugins geschrieben
 und die Selbsttest-Vorlagen in derselben Handschrift — der Selbsttest bestätigte also nur, was
 ohnehin angenommen war. An einem Plugin mit anderer Schreibweise meldeten alle drei Regeln
-nichts, obwohl fünf Fehler darin standen. Seitdem gibt es die Vorlage `schreibweisen`, die
+nichts, obwohl fünf Fehler darin standen. Seitdem gibt es die Vorlage `variants`, die
 jeden Fall in einer ungewohnten Form noch einmal stellt.
-
-## Was hier NICHT hingehört
-
-Regeln, die nur aus Geschmack entstehen. Jede Regel braucht einen Beleg: eine Rückmeldung, eine
-Stelle im Kern, eine gemessene Wirkung. Fehlt der, fehlt die Regel.
-
-## Fernziel
-
-Bewähren sich die Regeln über mehrere Erweiterungen, gehören sie fachlich in
-[`shopware-cli`](https://github.com/shopware/shopware-cli) — dann prüft die Store-Einreichung sie
-selbst, und niemand braucht dieses Paket mehr. Bis dahin ist es die Sammelstelle.
