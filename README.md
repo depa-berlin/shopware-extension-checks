@@ -93,7 +93,7 @@ Oberfläche.
 
 ### Name und Zeitstempel müssen übereinstimmen
 
-Die Zahl im Dateinamen (`Migration1774275954PropertyPreset.php`) und der Rückgabewert von
+Die Zahl im Dateinamen (`Migration1774275954AddNoteToExample.php`) und der Rückgabewert von
 `getCreationTimestamp()` müssen dieselbe sein. Sonst laufen zwei Reihenfolgen auseinander:
 **Gefunden** werden Migrationen per `scandir` nach Dateiname
 ([`MigrationCollection.php:161`](https://github.com/shopware/shopware/blob/trunk/src/Core/Framework/Migration/MigrationCollection.php)),
@@ -108,9 +108,10 @@ zurecht (`couldNotDetermineTimestamp`), und der Ordner sagt dann gar nichts übe
 Dateien **ohne** `getCreationTimestamp()` bleiben außen vor — im Migrationsverzeichnis dürfen laut
 Kern auch Traits und Schnittstellen liegen.
 
-*Herkunft:* Store-Rückmeldung zu `DepaVariantQuickSelect`: `Migration20240301PropertyPreset.php`
-gab `1774275954` zurück. Die Regel gegen den damaligen Stand laufen gelassen — sie meldet genau
-diese Datei.
+*Herkunft:* Store-Rückmeldung. Eine Migration trug ein Datum im Namen (`Migration20240301…`) und
+gab einen Unix-Zeitstempel zurück — zwei Zahlen, die nichts miteinander zu tun hatten, und die
+Ausführung folgte der zweiten. Die Regel gegen den damaligen Stand laufen gelassen: Sie meldet
+genau diese Datei.
 
 *Abhilfe:* `bin/console migration:refresh <Datei>` zieht Dateiname, Klassenname und Rückgabewert
 in einem Zug nach. Von Hand alle drei ändern, sonst wirft der Kern beim Laden
@@ -156,9 +157,9 @@ Geprüft wird: Jede Route nennt ein `meta.privilege`, jeder Navigationseintrag u
 Einstellungskachel ein `privilege`. Eine Route, die **nur weiterleitet**, ist ausgenommen — ihr
 Recht sitzt am Ziel, und Shopware macht das selbst so (`sw-landing-page`).
 
-*Herkunft:* Store-Rückmeldung zu `DepaVariantQuickSelect`. Das Modul nannte an keiner Stelle ein
-Recht, und es gab keine `addPrivilegeMappingEntry`. Die Regel gegen den damaligen Stand laufen
-gelassen (`8ed0b65^`) — sie meldet alle drei Routen und den Menüeintrag.
+*Herkunft:* Store-Rückmeldung. Ein Admin-Modul nannte an keiner Stelle ein Recht — keine Route,
+kein Menüeintrag —, und es gab keine `addPrivilegeMappingEntry`. Die Regel gegen den damaligen
+Stand laufen gelassen: Sie meldet alle drei Routen und den Menüeintrag.
 
 *Warum das niemandem auffällt:* `AclService.can()` liefert `true`, sobald gar kein Recht
 dasteht — die Oberfläche ist für jeden Admin-Benutzer offen. Und darüber steht `isAdmin()`, das
