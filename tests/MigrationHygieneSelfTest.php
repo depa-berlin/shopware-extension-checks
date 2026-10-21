@@ -35,6 +35,21 @@ class MigrationHygieneSelfTest extends TestCase
     }
 
     /**
+     * Eine generierte Spalte mit Ersatzwert ist die empfohlene Abhilfe und darf nicht gemeldet
+     * werden; eine ohne Ersatzwert bleibt NULL-fähig. Bis 0.5.0 galten beide als NULL-fähig, und
+     * die Regel meldete DepaPropertyTemplate genau für die Abhilfe, die sie selbst vorschlägt.
+     */
+    public function testItAcceptsGeneratedColumnsOnlyWithAFallbackValue(): void
+    {
+        $checks = $this->checksFor('generated');
+
+        static::assertSame(
+            ['Migration4000000001Generated.php: `without_fallback`.`option_key`'],
+            $checks->uniqueFindings(),
+        );
+    }
+
+    /**
      * Dieselben Fehler, anders geschrieben. Ohne diesen Fall belegte der Selbsttest nur, dass
      * die Regeln die Handschrift wiedererkennen, in der auch die Vorlagen verfasst sind — und
      * genau daran scheiterten sie am 22.09.2026 an einem fremden Plugin.
