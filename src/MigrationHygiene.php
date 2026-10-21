@@ -46,6 +46,16 @@ abstract class MigrationHygiene extends TestCase
         'FULLTEXT', 'SPATIAL', 'CHECK', 'PARTITION',
     ];
 
+    /**
+     * Eine generierte Spalte, die NULL auf einen Ersatzwert abbildet: `AS (IFNULL(…))` oder
+     * `AS (COALESCE(…))`, mit oder ohne `GENERATED ALWAYS` davor.
+     *
+     * Das ist die Abhilfe, die diese Regel selbst empfiehlt, und `NOT NULL` lässt sich daneben
+     * nicht schreiben: MariaDB lehnt es an generierten Spalten ab (1064). Eine generierte Spalte
+     * OHNE Ersatzwert, etwa `AS (option_id)`, bleibt NULL-fähig und wird weiter gemeldet.
+     */
+    private const GENERATED_WITH_FALLBACK = '/\bAS\s*\(\s*(?:IFNULL|COALESCE)\s*\(/i';
+
     /** Wurzel der Erweiterung — das Verzeichnis, in dem `src/` liegt. */
     abstract protected function pluginRoot(): string;
 
@@ -256,7 +266,7 @@ abstract class MigrationHygiene extends TestCase
                 }
 
                 foreach ($this->addedColumns($statement) as [$column, $rest]) {
-                    if (stripos($rest, 'NOT NULL') === false) {
+                    if (!$this->excludesNull($rest)) {
                         $nullable[$table][] = $column;
                     }
                 }
@@ -522,12 +532,30 @@ abstract class MigrationHygiene extends TestCase
         foreach ($this->clausesIn($body) as $clause) {
             $column = $this->columnDefinedBy($clause);
 
-            if ($column !== null && stripos($clause, 'NOT NULL') === false) {
+            if ($column !== null && !$this->excludesNull($clause)) {
                 $columns[] = $column;
             }
         }
 
         return $columns;
+    }
+
+    /**
+     * Ob eine Spaltendefinition NULL ausschließt: ausdrücklich per `NOT NULL` oder als generierte
+     * Spalte mit Ersatzwert.
+     *
+     * Der Anfang der Definition genügt: `addedColumns()` schneidet am ersten Komma ab, und das
+     * steht erst zwischen den Argumenten von `IFNULL(…)`. Ob der Ersatzwert selbst NULL sein
+     * kann, prüft die Regel nicht — wer `IFNULL(a, b)` mit einer NULL-fähigen Spalte `b`
+     * schreibt, rutscht durch.
+     */
+    private function excludesNull(string $definition): bool
+    {
+        if (stripos($definition, 'NOT NULL') !== false) {
+            return true;
+        }
+
+        return preg_match(self::GENERATED_WITH_FALLBACK, $definition) === 1;
     }
 
     /** Der Spaltenname, wenn die Klausel eine Spalte definiert — sonst null. */

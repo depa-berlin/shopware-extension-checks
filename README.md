@@ -80,6 +80,12 @@ Ersatzwert abbildet, oder im `PreWriteValidationEvent` prüfen. **Eine Prüfung 
 genügt nicht** — sie deckt einen von mehreren Schreibwegen ab und nichts außerhalb der
 Oberfläche.
 
+Eine generierte Spalte gilt als nie NULL, wenn ihr Ausdruck mit `IFNULL(` oder `COALESCE(`
+beginnt, etwa `GENERATED ALWAYS AS (IFNULL(option_id, 0x00…)) VIRTUAL`. `NOT NULL` lässt sich
+dort nicht verlangen, MariaDB lehnt es an generierten Spalten ab (1064). Eine generierte Spalte
+ohne Ersatzwert, etwa `AS (option_id)`, wird weiter gemeldet. Ob der Ersatzwert selbst NULL
+sein kann, prüft die Regel nicht.
+
 ### Name und Zeitstempel müssen übereinstimmen
 
 Die Zahl im Dateinamen (`Migration1774275954AddNoteToExample.php`) und der Rückgabewert von
@@ -204,6 +210,7 @@ eigene. Erkannt wird jede dieser Formen:
 | eindeutiger Schlüssel | im `CREATE TABLE`, als `ALTER TABLE … ADD UNIQUE KEY`, als `CREATE UNIQUE INDEX` |
 | Tabellenrumpf | mehrzeilig **und** in einer Zeile (zerlegt wird an Kommas auf Klammerebene) |
 | Bezeichner mit Punkt | `uniq.tabelle.spalte`, wie Shopware seine Schlüssel benennt |
+| nie NULL | `NOT NULL` **und** generierte Spalte mit `IFNULL`/`COALESCE`, als `GENERATED ALWAYS AS (…)` wie in der Kurzform `AS (…)` |
 
 Und über **alle** Migrationen hinweg: Die Spalte entsteht in der einen Datei, der Schlüssel
 darüber kommt in der nächsten. Zieht eine spätere Migration die Spalte auf `NOT NULL`, ist die
